@@ -5,7 +5,8 @@ import gym
 import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
-
+import sklearn
+import sklearn.preprocessing
 
 class Network:
     def __init__(self, state_size, action_size, learning_rate,discount_factor):
@@ -15,7 +16,9 @@ class Network:
         self.create_actor()
         self.create_critic()
         self.optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate)
-        self.loss = tf.keras.losses.MeanSquaredError()
+        self.critic_loss = tf.keras.losses.MeanSquaredError()
+        self.init_actor_weights = self.actor.get_weights()
+        self.init_critic_weights = self.critic.get_weights()
 
 
     def create_actor(self):
@@ -41,25 +44,30 @@ class Network:
         return loss
 
     def actor_loss(self, prob, action, td_error):
-        loss=-tf.math.log(prob[0, action]) * td_error
+       # loss=-tf.math.log(prob[0, action]) * td_error
+        all_action=[0]*self.action_size
+        all_action[action]=1
+        loss= tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=all_action,logits=prob)*td_error)
         return loss
 
-    def update_net(self, a_tape, c_tape, vlaue, reword, prob, action, td_error):
+    def update_net(self, a_tape, c_tape, old_value, td_target, prob, action, td_error):
         # Backpropagation
         actor_grads = a_tape.gradient(self.actor_loss(prob, action, td_error), self.actor.trainable_variables)
-        critic_grads = c_tape.gradient(self.critic_loss(vlaue, reword), self.critic.trainable_variables)
+        critic_grads = c_tape.gradient(self.critic_loss(td_target,old_value), self.critic.trainable_variables)
 
         self.optimizer.apply_gradients(zip(actor_grads, self.actor.trainable_variables))
         self.optimizer.apply_gradients(zip(critic_grads, self.critic.trainable_variables))
 
+    def restrat_net(self):
+        self.actor.set_weights(self.init_actor_weights)
+        self.critic.set_weights(self.init_critic_weights)
 
 class A2C(Network):
-    def __init__(self,env, learning_rate,discount_factor):
-        super().__init__(env.observation_space._shape[0],env.action_space.n, learning_rate,discount_factor)
+    def __init__(self,env,acshion_size,state_size, learning_rate,discount_factor):
+        super().__init__(state_size,acshion_size, learning_rate,discount_factor)
         self.discount_factor =discount_factor  # Discount factor for past rewards
-        self.max_steps_per_episode = 500
+        self.max_steps_per_episode = env._max_episode_steps+1
         self.env=env
-
         self.running_reward = []
 
     def print_reword(self):
@@ -69,7 +77,9 @@ class A2C(Network):
     def make_step(self,action):
         state, reward, done, _ = self.env.step(action)
         state = tf.expand_dims(state, 0)
+
         return state, reward, done
+
 
     def trine(self):
         episode_count = 0
@@ -83,14 +93,13 @@ class A2C(Network):
             for i in range(self.max_steps_per_episode):
                 with tf.GradientTape() as tape_actor, tf.GradientTape() as tape_critic:
 
-                    #self.env.render()
+                    self.env.render()
 
                     action_probs = self.actor(state)
                     old_value =  self.critic(state)
 
                     # Sample action from action probability distribution
                     action = np.random.choice(self.action_size, p=np.squeeze(action_probs))
-
                     # Apply the sampled action in our environment
                     next_state, reward, done = self.make_step(action)
                     new_value =  self.critic(next_state)
@@ -103,19 +112,20 @@ class A2C(Network):
                     episode_reward += reward
 
                     if done:
-                        #print(episode_reward)
+
                         break
                     state = next_state
-
             self.running_reward.append(episode_reward)
 
+           # self.restrat_net()
+
             episode_count += 1
-            if episode_count % 10 == 0:
+            if episode_count % 1 == 0:
                 template = "mean reward: {:.2f} at episode {}"
                 print(template.format(np.mean(self.running_reward[-100:]), episode_count))
             #tmp_all_reword=running_reward[:-100]
 
-            if np.mean(self.running_reward[-100:]) > -85:
+            if episode_count>100 and np.mean(self.running_reward[-100:]) > 90:
                 print("Solved at episode : {}, at reword of {}".format(episode_count, np.mean(self.running_reward[-100:])))
                 self.print_reword()
                 break
@@ -129,7 +139,6 @@ if __name__=="__main__":
 
     # Create the environment
     env = gym.make("Acrobot-v1")
-
     #env._max_episode_steps = 100
     # Set seed for experiment reproducibility
     seed = 1
@@ -137,9 +146,10 @@ if __name__=="__main__":
     tf.random.set_seed(seed)
     np.random.seed(seed)
 
-    action_size = env.action_space.n
     learning_rate=0.001
     discount_factor=0.99
+    acthion_size=3
+    state_size=6
 
-    model=A2C(env,learning_rate,discount_factor)
+    model=A2C(env,acthion_size,state_size,learning_rate,discount_factor)
     model.trine()
