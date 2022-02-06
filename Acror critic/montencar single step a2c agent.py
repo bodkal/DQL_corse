@@ -129,7 +129,6 @@ if __name__=="__main__":
 
     # Create the environment
     env = gym.make("Acrobot-v1")
-
     #env._max_episode_steps = 100
     # Set seed for experiment reproducibility
     seed = 1
